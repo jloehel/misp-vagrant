@@ -1,11 +1,8 @@
 #! /usr/bin/env bash
 
-MISP_ENV=$1
-if [ "$MISP_ENV" != "dev" ]; then
-    echo "Deployment of a MISP demo environment..."
-else
-    echo "Deployment of a MISP development environment..."
-fi
+set -e
+
+echo "Deployment of a MISP development environment..."
 
 # Database configuration
 DBHOST='localhost'
@@ -21,6 +18,9 @@ MISP_BASEURL='http://127.0.0.1:5000'
 MISP_LIVE='1'
 FQDN='localhost'
 
+# Supervisor config
+SUPERVISOR_PASSWORD="$(openssl rand -hex 32)"
+
 # OpenSSL configuration
 OPENSSL_C='LU'
 OPENSSL_ST='State'
@@ -31,18 +31,19 @@ OPENSSL_CN='Common Name'
 OPENSSL_EMAILADDRESS='info@localhost'
 
 # GPG configuration
-GPG_REAL_NAME='Real name'
+GPG_REAL_NAME='developer'
 GPG_EMAIL_ADDRESS='info@localhost'
 GPG_KEY_LENGTH='2048'
 GPG_PASSPHRASE=''
 
 # Sane PHP defaults
+PHP_VERSION=7.4
 upload_max_filesize=50M
 post_max_size=50M
 max_execution_time=300
 max_input_time=223
 memory_limit=512M
-PHP_INI=/etc/php/7.2/apache2/php.ini
+PHP_INI=/etc/php/${PHP_VERSION}/apache2/php.ini
 
 export DEBIAN_FRONTEND=noninteractive
 export LANGUAGE=en_US.UTF-8
@@ -54,11 +55,53 @@ dpkg-reconfigure locales
 
 echo "--- Installing MISP… ---"
 echo "--- Updating packages list ---"
-apt-get update
+apt update && apt upgrade -y
 
 
 echo "--- Install base packages… ---"
-apt-get -y install curl net-tools ifupdown gcc git gnupg-agent make python openssl redis-server sudo vim zip > /dev/null
+apt-get -y install \
+  curl \
+  composer \
+  acl \
+  cmake \
+  libcaca-dev \
+  liblua5.3-dev \
+  net-tools \
+  ifupdown \
+  gcc \
+  git \
+  gnupg-agent \
+  pkg-config \
+  make \
+  python3 \
+  python3-dev \
+  python3-venv \
+  python3-zmq \
+  python3-testresources \
+  python3-magic \
+  openssl \
+  redis-server \
+  sudo \
+  vim \
+  zip \
+  unzip \
+  libfuzzy-dev \
+  sqlite3 \
+  moreutils \
+  libxml2-dev \
+  libxslt1-dev \
+  zlib1g-dev \
+  libpq5 \
+  libjpeg-dev \
+  tesseract-ocr \
+  libpoppler-cpp-dev \
+  imagemagick \
+  libopencv-dev \
+  zbar-tools \
+  libzbar0 \
+  libzbar-dev \
+  ssdeep \
+  clamav
 
 
 echo "--- Installing and configuring Postfix… ---"
@@ -68,15 +111,15 @@ echo "--- Installing and configuring Postfix… ---"
 # postfix reload
 echo "postfix postfix/mailname string `hostname`.misp.local" | debconf-set-selections
 echo "postfix postfix/main_mailer_type string 'Satellite system'" | debconf-set-selections
-apt-get install -y postfix > /dev/null
+apt-get install -y postfix
 
 
 echo "--- Installing MariaDB specific packages and settings… ---"
-apt-get install -y mariadb-client mariadb-server > /dev/null
+apt-get install -y mariadb-client mariadb-server
 # Secure the MariaDB installation (especially by setting a strong root password)
 sleep 10 # give some time to the DB to launch...
 systemctl restart mariadb.service
-apt-get install -y expect > /dev/null
+apt-get install -y expect
 expect -f - <<-EOF
   set timeout 10
   spawn mysql_secure_installation
@@ -98,22 +141,45 @@ expect -f - <<-EOF
   send -- "y\r"
   expect eof
 EOF
-apt-get purge -y expect > /dev/null
+apt-get purge -y expect
 
-
+echo
 echo "--- Installing Apache2… ---"
-apt-get install -y apache2 apache2-doc apache2-utils > /dev/null
-a2dismod status > /dev/null
-a2enmod ssl > /dev/null
-a2enmod rewrite > /dev/null
-a2dissite 000-default > /dev/null
-a2ensite default-ssl > /dev/null
-
+apt-get install -y apache2 apache2-doc apache2-utils
+a2dismod status
+a2enmod ssl
+a2enmod rewrite
+a2enmod headers
+a2dissite 000-default
+a2ensite default-ssl
 
 echo "--- Installing PHP-specific packages… ---"
-apt-get install -y libapache2-mod-php php php-cli php-gnupg php-dev php-json php-mysql php-opcache php-readline php-redis php-xml php-mbstring php-gd > /dev/null
+apt-get install -y \
+  libapache2-mod-php7.4 \
+  php7.4 \
+  php7.4-cli \
+  php7.4-gnupg \
+  php7.4-dev \
+  php7.4-json \
+  php7.4-mysql \
+  php7.4-opcache \
+  php7.4-readline \
+  php7.4-redis \
+  php7.4-xml \
+  php7.4-mbstring \
+  php7.4-gd \
+  php7.4-intl \
+  php7.4-zip \
+  php-apcu \
+  php7.4-bcmath
 
-
+test -f /usr/lib/libfuzzy.a || ln -s /usr/lib/x86_64-linux-gnu/libfuzzy.a /usr/lib/libfuzzy.a
+test -f /usr/lib/libfuzzy.so || ln -s /usr/lib/x86_64-linux-gnu/libfuzzy.so /usr/lib/libfuzzy.so
+test -f /usr/lib/libfuzzy.so.2 || ln -s /usr/lib/x86_64-linux-gnu/libfuzzy.so.2 /usr/lib/libfuzzy.so.2
+test -f /usr/lib/libfuzzy.so.2.1.0 || ln -s /usr/lib/x86_64-linux-gnu/libfuzzy.so.2.1.0 /usr/lib/libfuzzy.so.2.1.0
+pecl install ssdeep || pecl upgrade ssdeep
+echo "extension=ssdeep.so" > /etc/php/7.4/mods-available/ssdeep.ini
+sudo phpenmod ssdeep
 
 echo -e "\n--- Configuring PHP (sane PHP defaults)… ---\n"
 for key in upload_max_filesize post_max_size max_execution_time max_input_time memory_limit
@@ -123,19 +189,11 @@ done
 
 
 echo "--- Restarting Apache… ---"
-systemctl restart apache2 > /dev/null
+systemctl restart apache2
 
+chown www-data:www-data $PATH_TO_MISP
+cd $PATH_TO_MISP
 
-echo "--- Retrieving MISP… ---"
-if [ "$MISP_ENV" != "dev" ]; then
-    mkdir $PATH_TO_MISP
-    chown www-data:www-data $PATH_TO_MISP
-    cd $PATH_TO_MISP
-    sudo -u www-data -H git clone https://github.com/MISP/MISP.git $PATH_TO_MISP
-else
-    chown www-data:www-data $PATH_TO_MISP
-    cd $PATH_TO_MISP
-fi
 #sudo -u www-data -H git checkout tags/$(git describe --tags `git rev-list --tags --max-count=1`)
 sudo -u www-data -H git config core.filemode false
 # chown -R www-data $PATH_TO_MISP
@@ -143,30 +201,8 @@ sudo -u www-data -H git config core.filemode false
 # chmod -R 700 $PATH_TO_MISP
 
 
-echo "--- Installing Mitre's STIX… ---"
-apt-get install -y python-dev python-pip libxml2-dev libxslt1-dev zlib1g-dev python-setuptools > /dev/null
-cd $PATH_TO_MISP/app/files/scripts
-sudo -u www-data -H git clone https://github.com/CybOXProject/python-cybox.git
-sudo -u www-data -H git clone https://github.com/STIXProject/python-stix.git
-cd $PATH_TO_MISP/app/files/scripts/python-cybox
-sudo -u www-data -H git checkout v2.1.0.12
-python setup.py install > /dev/null
-cd $PATH_TO_MISP/app/files/scripts/python-stix
-sudo -u www-data -H git checkout v1.1.1.4
-python setup.py install > /dev/null
-# install mixbox to accomodate the new STIX dependencies:
-cd $PATH_TO_MISP/app/files/scripts/
-sudo -u www-data -H git clone https://github.com/CybOXProject/mixbox.git
-cd $PATH_TO_MISP/app/files/scripts/mixbox
-sudo -u www-data -H git checkout v1.0.2
-python setup.py install > /dev/null
-
-
 echo "--- Retrieving CakePHP… ---"
 # CakePHP is included as a submodule of MISP, execute the following commands to let git fetch it:
-cd $PATH_TO_MISP
-sudo -u www-data -H git submodule init
-sudo -u www-data -H git submodule update
 # Once done, install CakeResque along with its dependencies if you intend to use the built in background jobs:
 cd $PATH_TO_MISP/app
 sudo -u www-data -H php composer.phar require kamisama/cake-resque:4.1.2
@@ -187,7 +223,7 @@ chmod -R g+ws $PATH_TO_MISP/app/files/scripts/tmp
 
 
 echo "--- Creating a database user… ---"
-mysql -u $DBUSER_ADMIN -p$DBPASSWORD_ADMIN -e "create database $DBNAME;"
+mysql -u $DBUSER_ADMIN -p$DBPASSWORD_ADMIN -e "create database if not exists $DBNAME;"
 mysql -u $DBUSER_ADMIN -p$DBPASSWORD_ADMIN -e "grant usage on *.* to $DBNAME@localhost identified by '$DBPASSWORD_MISP';"
 mysql -u $DBUSER_ADMIN -p$DBPASSWORD_ADMIN -e "grant all privileges on $DBNAME.* to '$DBUSER_MISP'@'localhost';"
 mysql -u $DBUSER_ADMIN -p$DBPASSWORD_ADMIN -e "flush privileges;"
@@ -199,7 +235,7 @@ echo "--- Configuring Apache… ---"
 # !!! apache.24.misp.ssl seems to be missing
 #cp $PATH_TO_MISP/INSTALL/apache.24.misp.ssl /etc/apache2/sites-available/misp-ssl.conf
 # If a valid SSL certificate is not already created for the server, create a self-signed certificate:
-openssl req -newkey rsa:4096 -days 365 -nodes -x509 -subj "/C=$OPENSSL_C/ST=$OPENSSL_ST/L=$OPENSSL_L/O=<$OPENSSL_O/OU=$OPENSSL_OU/CN=$OPENSSL_CN/emailAddress=$OPENSSL_EMAILADDRESS" -keyout /etc/ssl/private/misp.local.key -out /etc/ssl/private/misp.local.crt > /dev/null
+openssl req -newkey rsa:4096 -days 365 -nodes -x509 -subj "/C=$OPENSSL_C/ST=$OPENSSL_ST/L=$OPENSSL_L/O=<$OPENSSL_O/OU=$OPENSSL_OU/CN=$OPENSSL_CN/emailAddress=$OPENSSL_EMAILADDRESS" -keyout /etc/ssl/private/misp.local.key -out /etc/ssl/private/misp.local.crt
 
 
 echo "--- Add a VirtualHost for MISP ---"
@@ -227,7 +263,7 @@ a2ensite misp-ssl
 
 
 echo "--- Restarting Apache… ---"
-systemctl restart apache2 > /dev/null
+systemctl restart apache2
 
 
 echo "--- Configuring log rotation… ---"
@@ -268,8 +304,9 @@ $PATH_TO_MISP/app/Console/cake Live $MISP_LIVE
 
 echo "--- Generating a GPG encryption key… ---"
 apt-get install -y rng-tools haveged
-sudo -u www-data -H mkdir $PATH_TO_MISP/.gnupg
-chmod 700 $PATH_TO_MISP/.gnupg
+mkdir -p /opt/misp/.gnupg
+chown -R www-data /opt/misp
+chmod 700 /opt/misp/.gnupg
 cat >gen-key-script <<EOF
     %echo Generating a default key
     Key-Type: default
@@ -284,74 +321,180 @@ cat >gen-key-script <<EOF
     %commit
     %echo done
 EOF
-sudo -u www-data -H gpg --homedir $PATH_TO_MISP/.gnupg --batch --gen-key gen-key-script
+sudo -u www-data -H gpg --list-keys $GPG_EMAIL_ADDRESS || sudo -u www-data -H gpg --homedir /opt/misp/.gnupg --batch --gen-key gen-key-script
 rm gen-key-script
 # And export the public key to the webroot
-sudo -u www-data -H gpg --homedir $PATH_TO_MISP/.gnupg --batch --gen-key gen-key-scriptgpg --homedir $PATH_TO_MISP/.gnupg --export --armor $EMAIL_ADDRESS > $PATH_TO_MISP/app/webroot/gpg.asc
+gpg --homedir $PATH_TO_MISP/.gnupg --export --armor $GPG_EMAIL_ADDRESS > $PATH_TO_MISP/app/webroot/gpg.asc
 
 
-echo "--- Making the background workers start on boot… ---"
-chmod 755 $PATH_TO_MISP/app/Console/worker/start.sh
-# With systemd:
-# sudo cat > /etc/systemd/system/workers.service  <<EOF
-# [Unit]
-# Description=Start the background workers at boot
-#
-# [Service]
-# Type=forking
-# User=www-data
-# ExecStart=$PATH_TO_MISP/app/Console/worker/start.sh
-#
-# [Install]
-# WantedBy=multi-user.target
-# EOF
-# sudo systemctl enable workers.service > /dev/null
-# sudo systemctl restart workers.service > /dev/null
+echo "--- Installing supervisord and workers… ---"
+apt install supervisor
+cd $PATH_TO_MISP/app
+sudo -u www-data php composer.phar --with-all-dependencies require supervisorphp/supervisor \
+    guzzlehttp/guzzle \
+    php-http/message  \
+    lstrojny/fxmlrpc
+cat > /etc/supervisor/supervisord.conf << EOF
+; supervisor config file
 
-# With initd:
-if [ ! -e /etc/rc.local ]
-then
-    echo '#!/bin/sh -e' | sudo tee -a /etc/rc.local
-    echo 'exit 0' | sudo tee -a /etc/rc.local
-    chmod u+x /etc/rc.local
-fi
-sed -i -e '$i \sudo -u www-data -H bash /var/www/MISP/app/Console/worker/start.sh\n' /etc/rc.local
+[unix_http_server]
+file=/var/run/supervisor.sock   ; (the path to the socket file)
+chmod=0700                       ; sockef file mode (default 0700)
+
+[supervisord]
+logfile=/var/log/supervisor/supervisord.log ; (main log file;default $CWD/supervisord.log)
+pidfile=/var/run/supervisord.pid ; (supervisord pidfile;default supervisord.pid)
+childlogdir=/var/log/supervisor            ; ('AUTO' child log dir, default $TEMP)
+
+; the below section must remain in the config file for RPC
+; (supervisorctl/web interface) to work, additional interfaces may be
+; added by defining them in separate rpcinterface: sections
+[rpcinterface:supervisor]
+supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+[supervisorctl]
+serverurl=unix:///var/run/supervisor.sock ; use a unix:// URL  for a unix socket
+
+; The [include] section can just contain the "files" setting.  This
+; setting can list multiple files (separated by whitespace or
+; newlines).  It can also contain wildcards.  The filenames are
+; interpreted as relative to this file.  Included files *cannot*
+; include files themselves.
+
+[include]
+files = /etc/supervisor/conf.d/*.conf
+
+[inet_http_server]
+port=127.0.0.1:9001
+username=supervisor
+password=$SUPERVISOR_PASSWORD
+EOF
+
+cat > /etc/supervisor/conf.d/misp-workers.conf << EOF
+[group:misp-workers]
+programs=default,email,cache,prio,update
+
+[program:default]
+directory=$PATH_TO_MISP
+command=$PATH_TO_MISP/app/Console/cake start_worker default
+process_name=%(program_name)s_%(process_num)02d
+numprocs=5
+autostart=true
+autorestart=true
+redirect_stderr=false
+stderr_logfile=$PATH_TO_MISP/app/tmp/logs/misp-workers-errors.log
+stdout_logfile=$PATH_TO_MISP/app/tmp/logs/misp-workers.log
+directory=$PATH_TO_MISP
+user=www-data
+
+[program:prio]
+directory=$PATH_TO_MISP
+command=$PATH_TO_MISP/app/Console/cake start_worker prio
+process_name=%(program_name)s_%(process_num)02d
+numprocs=5
+autostart=true
+autorestart=true
+redirect_stderr=false
+stderr_logfile=$PATH_TO_MISP/app/tmp/logs/misp-workers-errors.log
+stdout_logfile=$PATH_TO_MISP/app/tmp/logs/misp-workers.log
+directory=$PATH_TO_MISP
+user=www-data
+
+[program:email]
+directory=$PATH_TO_MISP
+command=$PATH_TO_MISP/app/Console/cake start_worker email
+process_name=%(program_name)s_%(process_num)02d
+numprocs=5
+autostart=true
+autorestart=true
+redirect_stderr=false
+stderr_logfile=$PATH_TO_MISP/app/tmp/logs/misp-workers-errors.log
+stdout_logfile=$PATH_TO_MISP/app/tmp/logs/misp-workers.log
+directory=$PATH_TO_MISP
+user=www-data
+
+[program:update]
+directory=$PATH_TO_MISP
+command=$PATH_TO_MISP/app/Console/cake start_worker update
+process_name=%(program_name)s_%(process_num)02d
+numprocs=1
+autostart=true
+autorestart=true
+redirect_stderr=false
+stderr_logfile=$PATH_TO_MISP/app/tmp/logs/misp-workers-errors.log
+stdout_logfile=$PATH_TO_MISP/app/tmp/logs/misp-workers.log
+directory=$PATH_TO_MISP
+user=www-data
+
+[program:cache]
+directory=$PATH_TO_MISP
+command=$PATH_TO_MISP/app/Console/cake start_worker cache
+process_name=%(program_name)s_%(process_num)02d
+numprocs=5
+autostart=true
+autorestart=true
+redirect_stderr=false
+stderr_logfile=$PATH_TO_MISP/app/tmp/logs/misp-workers-errors.log
+stdout_logfile=$PATH_TO_MISP/app/tmp/logs/misp-workers.log
+user=www-data
+EOF
+systemctl restart supervisor && systemctl enable supervisor
+
+echo "--- Creating python venv ---"
+[ -e /usr/local/lib/misp-venv/bin/activate ] || python3 -m venv --system-site-packages /usr/local/lib/misp-venv
+sudo -u www-data /var/www/MISP/app/Console/cake Admin setSetting "MISP.python_bin" "/usr/local/lib/misp-venv/bin/python"
+source /usr/local/lib/misp-venv/bin/activate
+pip install --upgrade pip setuptools wheel
+pip install plyara>=2.0.2 pydeep pillow mattermostdriver
+
+
+echo "--- Installing Mitre's STIX… ---"
+SCRIPTS_PATH=$PATH_TO_MISP/app/files/scripts
+cd $SCRIPTS_PATH
+cd $SCRIPTS_PATH/python-cybox
+pip install .
+cd $SCRIPTS_PATH/python-stix
+pip install .
+cd $SCRIPTS_PATH/mixbox
+pip install .
 
 
 echo "--- Installing MISP modules… ---"
-apt-get install -y python3-dev python3-pip libpq5 libjpeg-dev > /dev/null
 cd /usr/local/src/
-git clone https://github.com/MISP/misp-modules.git
+[ -e /usr/local/src/misp-modules/.git ] || git clone https://github.com/MISP/misp-modules.git
 cd misp-modules
-pip3 install -I -r REQUIREMENTS > /dev/null
-pip3 install -I . > /dev/null
-# With systemd:
-# sudo cat > /etc/systemd/system/misp-modules.service  <<EOF
-# [Unit]
-# Description=Start the misp modules server at boot
-#
-# [Service]
-# Type=forking
-# User=www-data
-# ExecStart=/bin/sh -c 'misp-modules -l 0.0.0.0 -s &'
-#
-# [Install]
-# WantedBy=multi-user.target
-# EOF
-# sudo systemctl enable misp-modules.service > /dev/null
-# sudo systemctl restart misp-modules.service > /dev/null
+pip install -r REQUIREMENTS
+pip install .
+sudo cat > /etc/systemd/system/misp-modules.service  <<EOF
+[Unit]
+Description=Start the misp modules server at boot
+After=network.target
 
-# With initd:
-sed -i -e '$i \sudo -u www-data -H misp-modules -l 0.0.0.0 -s &\n' /etc/rc.local
+[Service]
+User=www-data
+WorkingDirectory=/usr/local/src/misp-modules
+Environment="PATH=/usr/local/lib/misp-venv/bin"
+ExecStart=/usr/local/lib/misp-venv/bin/misp-modules -l 127.0.0.1
 
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl enable misp-modules.service
+sudo systemctl restart misp-modules.service
+
+deactivate
 
 echo "--- Restarting Apache… ---"
-systemctl restart apache2 > /dev/null
+systemctl restart apache2
+# TODO: Is it possible to ping MISP. Sleep is not a good option
 sleep 5
 
 
-sudo -E $PATH_TO_MISP/app/Console/cake userInit -q > /dev/null
-AUTH_KEY=$(mysql -u $DBUSER_MISP -p$DBPASSWORD_MISP misp -e "SELECT authkey FROM users;" | tail -1)
+echo "--- Updating… ---"
+sudo -E $PATH_TO_MISP/app/Console/cake userInit -q
+sudo -u www-data /var/www/MISP/app/Console/cake Admin runUpdates
+echo "MySQL:  $DBUSER_ADMIN/$DBPASSWORD_ADMIN - $DBUSER_MISP/$DBPASSWORD_MISP"
+AUTH_KEY=$(mysql -u $DBUSER_MISP -p $DBPASSWORD_MISP misp -e "SELECT authkey FROM users;" | tail -1)
 echo "--- Updating the galaxies… ---"
 curl --header "Authorization: $AUTH_KEY" --header "Accept: application/json" --header "Content-Type: application/json" -o /dev/null -s -X POST http://127.0.0.1/galaxies/update
 
@@ -365,37 +508,10 @@ echo "--- Updating the object templates… ---"
 curl --header "Authorization: $AUTH_KEY" --header "Accept: application/json" --header "Content-Type: application/json" -o /dev/null -s -X  POST http://127.0.0.1/objectTemplates/update
 
 
-# echo "--- Enabling MISP new pub/sub feature (ZeroMQ)… ---"
-# # ZeroMQ depends on the Python client for Redis
-# pip install redis > /dev/null
-# ## Install ZeroMQ and prerequisites
-# apt-get install -y pkg-config > /dev/null
-# cd /usr/local/src/
-# git clone git://github.com/jedisct1/libsodium.git > /dev/null
-# cd libsodium
-# /autogen.sh > /dev/null
-# ./configure > /dev/null
-# make check > /dev/null
-# make > /dev/null
-# make install > /dev/null
-# ldconfig > /dev/null
-# cd /usr/local/src/
-# wget https://archive.org/download/zeromq_4.1.5/zeromq-4.1.5.tar.gz > /dev/null
-# tar -xvf zeromq-4.1.5.tar.gz > /dev/null
-# cd zeromq-4.1.5/
-# ./autogen.sh > /dev/null
-# ./configure > /dev/null
-# make check > /dev/null
-# make > /dev/null
-# make install > /dev/null
-# ldconfig > /dev/null
-# ## install pyzmq
-# pip install pyzmq > /dev/null
-
-
 echo "--- MISP is ready ---"
 echo "Login and passwords for the MISP image are the following:"
 echo "Web interface (default network settings): $MISP_BASEURL"
 echo "MISP admin:  admin@admin.test/admin"
 echo "Shell/SSH: misp/Password1234"
+echo "Supervisor password: $SUPERVISOR_PASSWORD"
 echo "MySQL:  $DBUSER_ADMIN/$DBPASSWORD_ADMIN - $DBUSER_MISP/$DBPASSWORD_MISP"
